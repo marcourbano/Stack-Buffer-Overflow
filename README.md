@@ -199,7 +199,7 @@ We set “ABBA”, that is 4 bytes value, to fill the return address.
 
 Executing exploit.py and then analysing the EIP register, we can correctly find that the value of return address is `\x41\x42\x42\x41`, hence `ABBA`!
 
-![ABBA](images/abba+%281%29-1768904860.gif)
+![ABBA](images/abba.gif)
 
 ### Badchars discovery.
 
