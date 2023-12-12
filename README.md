@@ -1,5 +1,8 @@
 ![Bit wave](/images/wave.png)
 
+# Author
+[Marco Urbano](marcourbano.github.io) aka CrashOverflow
+
 # Stack Buffer Overflow: JMP ESP Attack
 
 The following article will explain in a clear -- hopefully -- way how to exploit the stack based buffer overflow for a vulnerable Windows 32bit executable.
