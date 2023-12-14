@@ -4,7 +4,7 @@
 [Marco Urbano](https://marcourbano.github.io) aka CrashOverflow
 
 # Disclaimer
-For educational purposes only.
+This walktrough of the Buffer Overflow Preparation from TryHackMe describes the exploitation of an intentionally vulnerable binary and it is **for educational purposes only**.
 
 # Stack Buffer Overflow: JMP ESP Attack
 
@@ -471,7 +471,7 @@ except:
 
 ```
 
-### Exploitation: fun and profit ;-)
+### Exploitation
 
 Before executing the exploit, the last thing to do is to listen for the shell with `netcat`
 
